@@ -1,0 +1,18 @@
+{
+  "name": "Hello Extensions",
+  "description": "Base Level Extension",
+  "version": "1.0",
+  "manifest_version": 3,
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/thebrowsercompany/*/commit/*/checks/*/logs",
+        "https://*.blob.core.windows.net/actions-results/*/workflow-job-run-*/logs/job/job-logs.txt*"
+      ],
+      "js": [
+        "lunr.js",
+        "index.js"
+      ]
+    }
+  ]
+}
