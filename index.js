@@ -1,342 +1,397 @@
+// TODO: Try https://www.fusejs.io/ which seems to have a more friendly matching syntax.
+//       At the moment it's impossible to e.g. capture regexes and add context links to the page.
+// TODO: You can't apply global transformations such as relative timestamp conversions.
+// TODO: You can't use this extension on website URLs where it isn't allowlisted (See https://stackoverflow.com/questions/12433271/can-i-allow-the-extension-user-to-choose-matching-domains)
+// TODO: It's hard to tell which highlighted line is selected when navigating with the arrow keys.
+// TODO: There's no documentation for new users.
 
-//Creating Elements
-var btn = document.createElement("BUTTON")
-var t = document.createTextNode("CLICK ME");
-btn.appendChild(t);
-//Appending to DOM 
-document.body.appendChild(btn);
+class LineScanner {
+    constructor(input) {
+        this.input = input;
+    }
 
-logContents = document.documentElement.innerHTML;
+    get length() {
+        let count = 1; // Start at 1 since even a string without \n has one line
+        let pos = 0;
 
-var documents = [{ name: 'Log', content: logContents }];
+        // Handle special case of empty string
+        if (this.input.length === 0) {
+            return 0;
+        }
 
+        while ((pos = this.input.indexOf('\n', pos)) !== -1) {
+            count++;
+            pos++; // Move past the newline
+        }
 
-const index = lunr(function () {
-  // Reference each match using this value.
-  this.ref('name');
- 
-  // Search this field.
-  this.field('content');
+        // Don't count a trailing newline as an extra line
+        if (this.input.endsWith('\n')) {
+            count--;
+        }
 
-  // Allow lunr to tell us where matches occurred in the search text
-  this.metadataWhitelist = ['position']
+        return count;
+    }
 
-  documents.forEach(function (doc) {
-    this.add(doc);
-  }, this);
-});
+    forEach(callback) {
+        if (this.input.length === 0) {
+            return;
+        }
 
+        let start = 0;
+        let pos = 0;
 
-function highlightSubstrings(text, ranges) {
-    // Sort ranges by offset to process them in order
-    ranges.sort((a, b) => a[0] - b[0]);
-    
-    // Validate ranges don't overlap
-    for (let i = 0; i < ranges.length - 1; i++) {
-        const currentEnd = ranges[i][0] + ranges[i][1];
-        const nextStart = ranges[i + 1][0];
-        if (currentEnd > nextStart) {
-            throw new Error(`Overlapping ranges detected: ${ranges[i]} and ${ranges[i + 1]}`);
+        while (true) {
+            pos = this.input.indexOf('\n', start);
+
+            if (pos === -1) {
+                // Handle the last line (or only line if no newlines)
+                if (start < this.input.length) {
+                    callback(this.input.slice(start));
+                }
+                break;
+            }
+
+            // Extract the line without the newline character
+            callback(this.input.slice(start, pos));
+
+            start = pos + 1;
         }
     }
-    
-    // Process the string
-    let result = '';
-    let currentPos = 0;
-    
-    for (const [offset, length] of ranges) {
-        // Add text before the highlight
-        result += text.slice(currentPos, offset);
-        
-        // Add highlighted text
-        const highlightedText = text.slice(offset, offset + length);
-        result += `<span style="color: green">${highlightedText}</span>`;
-        
-        currentPos = offset + length;
-    }
-    
-    // Add remaining text
-    result += text.slice(currentPos);
-    
-    return result;
 }
 
-function highlightMatchedLines(text, ranges) {
-    // Split text into lines and track line start positions
-    const lines = text.split('\n');
-    let lineStartPositions = [];
-    let currentPosition = 0;
-    
-    for (const line of lines) {
-        lineStartPositions.push(currentPosition);
-        currentPosition += line.length + 1; // +1 for the newline character
-    }
-    
-    // Create a Set to track which lines need highlighting
-    const linesToHighlight = new Set();
-    
-    // For each range, find which line it belongs to
-    for (const [offset, length] of ranges) {
-        // Find the line that contains this range
-        const lineIndex = lineStartPositions.findIndex((startPos, index) => {
-            const nextLineStart = index < lines.length - 1 ? 
-                lineStartPositions[index + 1] : text.length;
-            return offset >= startPos && offset < nextLineStart;
-        });
-        
-        if (lineIndex !== -1) {
-            linesToHighlight.add(lineIndex);
+class TextRangeMapper {
+    constructor(text) {
+        this.text = text;
+        this.lineStarts = [];
+        this.rangesByLine = new Map(); // Map<lineNumber, Array<{start, length, callback}>>
+
+        // Build index of line start positions
+        let pos = 0;
+        this.lineStarts.push(0);
+
+        while ((pos = text.indexOf('\n', pos)) !== -1) {
+            this.lineStarts.push(pos + 1);
+            pos++;
         }
     }
-    
-    // CSS styles for the highlighted lines
-    const highlightStyle = `
-        display: block;
-        background-color: #ffebee;
-        color: #d32f2f;
-        border-top: 1px solid #ffcdd2;
-        border-bottom: 1px solid #ffcdd2;
-        padding: 2px 4px;
-        margin: 2px 0;
-        line-height: 1.4;
-    `;
-    
-    // Build the result by wrapping highlighted lines in styled spans
-    const result = lines
-        .map((line, index) => 
-            linesToHighlight.has(index) 
-                ? `<span style="${highlightStyle}">${line}</span>` 
-                : line
-        )
-        .join('\n');
-    
-    return result;
+
+    // Add a range specified as [offset, length, callback]
+    addRange(offset, length, callback) {
+        const range = {
+            start: offset,
+            end: offset + length,
+            callback
+        };
+
+        // Find which lines this range intersects with
+        const startLine = this._findLineNumber(range.start);
+        const endLine = this._findLineNumber(range.end);
+
+        // Add the range to each line it intersects with
+        for (let line = startLine; line <= endLine; line++) {
+            if (!this.rangesByLine.has(line)) {
+                this.rangesByLine.set(line, []);
+            }
+
+            // Convert to line-relative coordinates
+            const lineStart = this.lineStarts[line];
+            const lineEnd = line < this.lineStarts.length - 1
+                ? this.lineStarts[line + 1] - 1
+                : this.text.length;
+
+            this.rangesByLine.get(line).push({
+                start: Math.max(0, range.start - lineStart),
+                length: Math.min(range.end, lineEnd) - Math.max(range.start, lineStart),
+                callback: range.callback
+            });
+        }
+    }
+
+    // Add multiple ranges at once
+    addRanges(ranges) {
+        for (const [offset, length, callback] of ranges) {
+            this.addRange(offset, length, callback);
+        }
+    }
+
+    // Binary search to find which line contains a given offset
+    _findLineNumber(offset) {
+        let low = 0;
+        let high = this.lineStarts.length - 1;
+
+        while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const lineStart = this.lineStarts[mid];
+            const lineEnd = mid < this.lineStarts.length - 1
+                ? this.lineStarts[mid + 1] - 1
+                : this.text.length;
+
+            if (offset >= lineStart && offset <= lineEnd) {
+                return mid;
+            } else if (offset < lineStart) {
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
+        }
+
+        return Math.min(low, this.lineStarts.length - 1);
+    }
+
+    // Get all ranges and their callbacks for a given line number
+    getRanges(lineNumber) {
+        if (lineNumber < 0 || lineNumber >= this.lineStarts.length) {
+            return [];
+        }
+
+        return this.rangesByLine.get(lineNumber) || [];
+    }
+
+    // Execute all callbacks for ranges that intersect with the given line
+    processLine(lineNumber) {
+        const ranges = this.getRanges(lineNumber);
+        const line = this.getLine(lineNumber);
+
+        if (line === undefined) return;
+
+        for (const range of ranges) {
+            range.callback(line);
+        }
+    }
+
+    // Utility method to get the text of a specific line
+    getLine(lineNumber) {
+        if (lineNumber < 0 || lineNumber >= this.lineStarts.length) {
+            return undefined;
+        }
+
+        const start = this.lineStarts[lineNumber];
+        const end = lineNumber < this.lineStarts.length - 1
+            ? this.lineStarts[lineNumber + 1] - 1
+            : this.text.length;
+
+        return this.text.slice(start, end);
+    }
 }
 
-function collapseUnmatchedLines(text, ranges) {
-    // Split text into lines and track line start positions
-    const lines = text.split('\n');
-    let lineStartPositions = [];
-    let currentPosition = 0;
-    
-    for (const line of lines) {
-        lineStartPositions.push(currentPosition);
-        currentPosition += line.length + 1;
+class PipelineInterpreter {
+    constructor() {
+        // Input of the currently executing program.
+        this.currentProgramInput = "";
+
+        // Terminate early. Usable by built-in functions
+        this.exitEarlyOk = false;
+
+        // Built-in functions
+        this.functions = {
+            uppercase: (value) => value.toUpperCase(),
+            match: (value, regex) => {
+                const match = value.match(regex);
+                console.log(`Match is ${match}`);
+                if (!match) return null;
+                return match; // Return the full match array
+            },
+            fallback: (value, fallback_value) => {
+                console.log(`calling fallback: ((${value})) ((${fallback_value}))`);
+                if (!value) {
+                    this.exitEarlyOk = true;
+                    return fallback_value;
+                }
+                return value;
+            }
+        };
     }
-    
-    // Create a Set to track which lines need highlighting
-    const linesToHighlight = new Set();
-    
-    // For each range, find which line it belongs to
-    for (const [offset, length] of ranges) {
-        const lineIndex = lineStartPositions.findIndex((startPos, index) => {
-            const nextLineStart = index < lines.length - 1 ? 
-                lineStartPositions[index + 1] : text.length;
-            return offset >= startPos && offset < nextLineStart;
-        });
-        
-        if (lineIndex !== -1) {
-            linesToHighlight.add(lineIndex);
+
+    // Register a new pipeline function
+    registerFunction(name, fn) {
+        this.functions[name] = fn;
+    }
+
+    // Main interpret function
+    interpret(input, program) {
+        this.currentProgramInput = input;
+
+        let value = input;
+        const stages = this._parsePipeline(program);
+        for (const stage of stages) {
+            value = this._executeStage(stage, value);
+            if (this.exitEarlyOk) {
+                console.log("exiting early");
+                this.exitEarlyOk = false;
+                break;
+            }
+        }
+
+        this.currentProgramInput = "";
+
+        return value;
+    }
+
+    // Parse pipeline into stages
+    _parsePipeline(program) {
+        return program
+            .split('|')
+            .map(stage => stage.trim())
+            .filter(stage => stage.length > 0);
+    }
+
+    // Execute a single pipeline stage
+    _executeStage(stage, value) {
+        // Handle string substitution stage (anything with {{}} syntax)
+        if (stage.includes('{{')) {
+            stage = this._processTemplate(stage, value);
+        }
+
+        // Handle function calls
+        const functionMatch = stage.match(/([a-zA-Z]+)\((.*)\)/);
+        if (functionMatch) {
+            const [, fnName, argsStr] = functionMatch;
+            const args = this._parseArgs(argsStr);
+            return this.functions[fnName](value, ...args);
+        }
+
+        // Handle function calls without parentheses
+        if (this.functions[stage]) {
+            return this.functions[stage](value);
+        }
+
+        // Literal
+        return stage;
+        // throw new Error(`Invalid pipeline stage: ${stage}`);
+    }
+
+    // Parse function arguments
+    _parseArgs(argsStr) {
+        if (!argsStr.trim()) return [];
+
+        const args = [];
+        let current = '';
+        let depth = 0;
+        let inString = false;
+
+        for (let i = 0; i < argsStr.length; i++) {
+            const char = argsStr[i];
+
+            if (char === '/' && argsStr[i + 1] !== ' ') {
+                // Handle regex literals
+                let j = i + 1;
+                while (j < argsStr.length && argsStr[j] !== '/' || argsStr[j - 1] === '\\') j++;
+                args.push(new RegExp(argsStr.slice(i + 1, j), "ig"));
+                i = j;
+                continue;
+            }
+
+            if (char === '"' && argsStr[i - 1] !== '\\') inString = !inString;
+            if (!inString) {
+                if (char === '(') depth++;
+                if (char === ')') depth--;
+            }
+
+            if (char === ',' && depth === 0 && !inString) {
+                args.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+
+        if (current.trim()) args.push(current.trim());
+        return args;
+    }
+
+    // Process a template string, replacing {{}} references
+    _processTemplate(template, value) {
+        console.log(`processing template with value ${value}`);
+
+        template = template.replace(/{{_}}/g, this.currentProgramInput);
+
+        if (value === null || value === undefined) {
+            return template.replace(/{{[^}]*}}/g, '');
+        }
+
+        // Handle array-like value
+        if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+            // Replace {{n}} with array indices
+            template = template.replace(/{{(\d+)}}/g, (_, index) => {
+                return value[index] !== undefined ? String(value[index]) : '';
+            });
+
+            // Replace {{}} with the entire array/object if it exists
+            template = template.replace(/{{}}/g, () => {
+                if (Array.isArray(value)) {
+                    return value.join(',');
+                }
+                return String(value);
+            });
+
+            return template;
+        }
+
+        // Handle simple value
+        return template.replace(/{{}}/g, String(value));
+    }
+}
+
+function processHTMLDocument(text, searchResults) {
+    // Split text into lines and track line start positions
+    const lines = new LineScanner(text);
+
+    // Store the matched ranges for fast line-based lookup.
+    const ranges = new TextRangeMapper(text);
+
+    for (const searchResult of searchResults) {
+        for (const range of searchResult.ranges) {
+            const offset = range[0];
+            const length = range[1];
+            ranges.addRange(offset, length, searchResult.processor);
         }
     }
-    
-    // CSS styles
-    const styles = `
-        <style>
-            .highlighted-line {
-                display: block;
-                background-color: #ffebee;
-                color: #d32f2f;
-                border-top: 1px solid #ffcdd2;
-                border-bottom: 1px solid #ffcdd2;
-                padding: 2px 4px;
-                margin: 2px 0;
-                line-height: 1.4;
-            }
-            .collapse-button {
-                background-color: #e0e0e0;
-                border: 1px solid #bdbdbd;
-                color: #424242;
-                padding: 4px 8px;
-                margin: 4px auto;
-                cursor: pointer;
-                display: block;
-                width: fit-content;
-                min-width: 150px;
-                text-align: center;
-                font-family: monospace;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            .collapse-button:hover {
-                background-color: #bdbdbd;
-            }
-            .hidden-lines {
-                display: none;
-                white-space: pre-wrap;
-                font-family: monospace;
-                padding: 4px;
-                background-color: #fafafa;
-            }
-            .hidden-lines.visible {
-                display: block;
-            }
-        </style>
-    `;
-    
-    // Group consecutive lines into sections (highlighted or not)
-    let sections = [];
-    let currentSection = { highlighted: false, lines: [] };
-    
-    lines.forEach((line, index) => {
-        const isHighlighted = linesToHighlight.has(index);
-        
-        if (currentSection.lines.length === 0) {
-            currentSection.highlighted = isHighlighted;
-            currentSection.lines.push(line);
-        } else if (currentSection.highlighted === isHighlighted) {
-            currentSection.lines.push(line);
+
+    // Generate HTML with indexed IDs for highlighted lines
+    let highlightIndex = 0;
+    let lineNum = -1;
+    let linesHtml = "";
+
+    lines.forEach((line) => {
+        lineNum++;
+        const rangesOnLine = ranges.getRanges(lineNum);
+        if (rangesOnLine.length > 0) {
+            const range = rangesOnLine[0]; // The first matched range takes precendence over others on the same line.
+            const processedLine = range.callback(line);
+            linesHtml += `<span id="highlight-${highlightIndex++}" class="highlighted-line">${processedLine}</span>`;
         } else {
-            sections.push(currentSection);
-            currentSection = { highlighted: isHighlighted, lines: [line] };
+            linesHtml += line;
         }
+        linesHtml += "\n";
     });
-    sections.push(currentSection);
-    
-    // Generate HTML for each section
-    let sectionId = 0;
-    const sectionsHtml = sections.map(section => {
-        if (section.highlighted) {
-            return section.lines
-                .map(line => `<span class="highlighted-line">${line}</span>`)
-                .join('\n');
-        } else {
-            const id = `hidden-section-${sectionId++}`;
-            return `
-                <button class="collapse-button" onclick="toggleSection('${id}')">
-                    Show ${section.lines.length} line${section.lines.length > 1 ? 's' : ''}
-                </button>
-                <div id="${id}" class="hidden-lines">
-                    ${section.lines.join('\n')}
-                </div>
-            `;
-        }
-    }).join('\n');
-    
-    // JavaScript for toggling sections
-    const script = `
-        <script>
-            function toggleSection(id) {
-                const element = document.getElementById(id);
-                element.classList.toggle('visible');
-                const button = element.previousElementSibling;
-                const lineCount = element.textContent.trim().split('\\n').length;
-                button.textContent = element.classList.contains('visible') 
-                    ? \`Hide \${lineCount} line\${lineCount > 1 ? 's' : ''}\`
-                    : \`Show \${lineCount} line\${lineCount > 1 ? 's' : ''}\`;
-            }
-        </script>
-    `;
-    
-    // Combine everything into a container div
-    return `
-        <div id="highlight-container">
-            ${styles}
-            ${sectionsHtml}
-            ${script}
-        </div>
-    `;
-}
 
-function highlightWithKeynav(text, ranges, containerId = 'highlight-container') {
-    // Split text into lines and track line start positions
-    const lines = text.split('\n');
-    let lineStartPositions = [];
-    let currentPosition = 0;
-    
-    for (const line of lines) {
-        lineStartPositions.push(currentPosition);
-        currentPosition += line.length + 1;
-    }
-    
-    // Create a Set to track which lines need highlighting
-    const linesToHighlight = new Set();
-    
-    // For each range, find which line it belongs to
-    for (const [offset, length] of ranges) {
-        const lineIndex = lineStartPositions.findIndex((startPos, index) => {
-            const nextLineStart = index < lines.length - 1 ? 
-                lineStartPositions[index + 1] : text.length;
-            return offset >= startPos && offset < nextLineStart;
-        });
-        
-        if (lineIndex !== -1) {
-            linesToHighlight.add(lineIndex);
-        }
-    }
-    
-    // CSS styles
-    const styles = `
-        <style>
-            .highlighted-line {
-                display: block;
-                background-color: #ffebee;
-                color: #d32f2f;
-                border-top: 1px solid #ffcdd2;
-                border-bottom: 1px solid #ffcdd2;
-                padding: 2px 4px;
-                margin: 2px 0;
-                line-height: 1.4;
-                scroll-margin-top: 20px;
-            }
-            .highlighted-line.current {
-                background-color: #ef9a9a;
-                border-top: 1px solid #e57373;
-                border-bottom: 1px solid #e57373;
-            }
-            #${containerId} {
-                position: relative;
-            }
-        </style>
-    `;
-    
-    // Generate HTML with indexed IDs for highlighted lines
-    let highlightIndex = 0;
-    const linesHtml = lines.map((line, index) => {
-        if (linesToHighlight.has(index)) {
-            return `<span id="highlight-${highlightIndex++}" class="highlighted-line">${line}</span>`;
-        }
-        return line;
-    }).join('\n');
-    
     // Return both the HTML and a function to initialize the navigation
     return {
         html: `
-            <div id="${containerId}">
-                ${styles}
+            <div id="transformed-log-output">
                 ${linesHtml}
             </div>
         `,
-        initializeNavigation: function() {
+        initializeNavigation: function () {
             let currentHighlight = -1;
             const highlightCount = highlightIndex;
-            
+
             function navigateHighlights(direction) {
                 if (highlightCount === 0) return;
-                
+
                 // Remove current highlight
                 if (currentHighlight !== -1) {
                     document.getElementById('highlight-' + currentHighlight)
                         ?.classList.remove('current');
                 }
-                
+
                 // Calculate new highlight position
                 if (currentHighlight === -1) {
                     currentHighlight = direction > 0 ? 0 : highlightCount - 1;
                 } else {
                     currentHighlight = (currentHighlight + direction + highlightCount) % highlightCount;
                 }
-                
+
                 // Apply new highlight and scroll
                 const element = document.getElementById('highlight-' + currentHighlight);
                 if (element) {
@@ -344,7 +399,7 @@ function highlightWithKeynav(text, ranges, containerId = 'highlight-container') 
                     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             }
-            
+
             // Add keyboard event listener
             document.addEventListener('keydown', (event) => {
                 if (event.key === 'ArrowDown') {
@@ -359,163 +414,103 @@ function highlightWithKeynav(text, ranges, containerId = 'highlight-container') 
     };
 }
 
-function highlightTestFlakes(text, ranges, containerId = 'highlight-container') {
-    // Split text into lines and track line start positions
-    const lines = text.split('\n');
-    let lineStartPositions = [];
-    let currentPosition = 0;
-    
-    for (const line of lines) {
-        lineStartPositions.push(currentPosition);
-        currentPosition += line.length + 1;
-    }
-    
-    // Create a Set to track which lines need highlighting
-    const linesToHighlight = new Set();
-    
-    // For each range, find which line it belongs to
-    for (const [offset, length] of ranges) {
-        const lineIndex = lineStartPositions.findIndex((startPos, index) => {
-            const nextLineStart = index < lines.length - 1 ? 
-                lineStartPositions[index + 1] : text.length;
-            return offset >= startPos && offset < nextLineStart;
+function processFailureLine(line) {
+    const testMatch = line.match(/[tT]est[a-zA-Z_\-0-9]+/);
+    if (testMatch) {
+        const testName = testMatch[0];
+        const baseUrl = "https://app.datadoghq.com/dashboard/ihd-vuj-2sr/flaky-test-investigation";
+        const params = new URLSearchParams({
+            fromUser: "false",
+            refresh_mode: "sliding",
+            "tpl_var_test_function[0]": testName,
+            live: "true"
         });
-        
-        if (lineIndex !== -1) {
-            linesToHighlight.add(lineIndex);
-        }
+        const url = `${baseUrl}?${params.toString()}`;
+        line = `<span class="highlighted-line-content">${line}</span><a href="${url}" class="test-link">Check Test Flakiness</a>`;
     }
-    
-    // CSS styles
-    const styles = `
-        <style>
-            .highlighted-line {
-                display: block;
-                background-color: #ffebee;
-                color: #d32f2f;
-                border-top: 1px solid #ffcdd2;
-                border-bottom: 1px solid #ffcdd2;
-                padding: 2px 4px;
-                margin: 2px 0;
-                line-height: 1.4;
-                scroll-margin-top: 20px;
-            }
-            .highlighted-line.current {
-                background-color: #ef9a9a;
-                border-top: 1px solid #e57373;
-                border-bottom: 1px solid #e57373;
-            }
-            .test-link {
-                display: block;
-                font-size: 0.9em;
-                margin-top: 4px;
-                color: #1976d2;
-                text-decoration: none;
-            }
-            .test-link:hover {
-                text-decoration: underline;
-            }
-            #${containerId} {
-                position: relative;
-            }
-        </style>
-    `;
-    
-    // Function to extract test name and create link
-    function processLine(line) {
-        const testMatch = line.match(/test[a-zA-Z_\-0-9]+/);
-        if (testMatch) {
-            const testName = testMatch[0];
-            const baseUrl = "https://app.datadoghq.com/dashboard/ihd-vuj-2sr/flaky-test-investigation";
-            const params = new URLSearchParams({
-                fromUser: "false",
-                refresh_mode: "sliding",
-                "tpl_var_test_function[0]": testName,
-                live: "true"
-            });
-            const url = `${baseUrl}?${params.toString()}`;
-            return `<span class="highlighted-line-content">${line}</span><a href="${url}" class="test-link">Check if ${testName} is Flaky</a>`;
-        }
-        return line;
-    }
-    
-    // Generate HTML with indexed IDs for highlighted lines
-    let highlightIndex = 0;
-    const linesHtml = lines.map((line, index) => {
-        if (linesToHighlight.has(index)) {
-            const processedLine = processLine(line);
-            return `<span id="highlight-${highlightIndex++}" class="highlighted-line">${processedLine}</span>`;
-        }
-        return line;
-    }).join('\n');
-    
-    // Return both the HTML and a function to initialize the navigation
-    return {
-        html: `
-            <div id="${containerId}">
-                ${styles}
-                ${linesHtml}
-            </div>
-        `,
-        initializeNavigation: function() {
-            let currentHighlight = -1;
-            const highlightCount = highlightIndex;
-            
-            function navigateHighlights(direction) {
-                if (highlightCount === 0) return;
-                
-                // Remove current highlight
-                if (currentHighlight !== -1) {
-                    document.getElementById('highlight-' + currentHighlight)
-                        ?.classList.remove('current');
-                }
-                
-                // Calculate new highlight position
-                if (currentHighlight === -1) {
-                    currentHighlight = direction > 0 ? 0 : highlightCount - 1;
-                } else {
-                    currentHighlight = (currentHighlight + direction + highlightCount) % highlightCount;
-                }
-                
-                // Apply new highlight and scroll
-                const element = document.getElementById('highlight-' + currentHighlight);
-                if (element) {
-                    element.classList.add('current');
-                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
-            
-            // Add keyboard event listener
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'ArrowDown') {
-                    event.preventDefault();
-                    navigateHighlights(1);
-                } else if (event.key === 'ArrowUp') {
-                    event.preventDefault();
-                    navigateHighlights(-1);
-                }
-            });
-        }
-    };
+
+    return `<span class="highlighted-fail">${line}</span>`;
 }
 
-const results = index.search("error");
-console.log(results);
-console.log(results[0]);
-console.log(results[0].matchData);
+const DEFAULT_RULES = [
+    {
+        pattern: "error",
+        processor: function (line) {
+            return `<span class="highlighted-error">${line}</span>`;
+        }
+    },
+    {
+        pattern: "hint",
+        processor: function (line) {
+            return `<span class="highlighted-hint">${line}</span>`;
+        }
+    }
+];
 
-var highlightedContent = highlightTestFlakes(
-  documents[0].content,
-  results[0].matchData.metadata.error.content.position
-);
+async function loadAndExecuteRules() {
+    var documents = [{ name: 'Log', content: document.documentElement.innerHTML }];
+    const index = lunr(function () {
+        // Reference each match using this value.
+        this.ref('name');
 
-/*
-console.log(highlightedContent);
-document.open();
-document.write("<html><body>");
-document.write(highlightedContent);
-document.write("</body></html>");
-document.close();
-*/
-document.body.innerHTML = highlightedContent.html;
-highlightedContent.initializeNavigation();
+        // Search this field.
+        this.field('content');
+
+        // Allow lunr to tell us where matches occurred in the search text
+        this.metadataWhitelist = ['position']
+
+        documents.forEach(function (doc) {
+            this.add(doc);
+        }, this);
+    });
+
+    let rules = DEFAULT_RULES;
+
+    const { highlightRules = [] } = await chrome.storage.local.get('highlightRules');
+    const interpreter = new PipelineInterpreter();
+
+    if (highlightRules && highlightRules.length > 0) {
+        rules = highlightRules.map(rule => ({
+            pattern: rule.pattern,
+            processor: function (line) {
+                // Remove newlines from program.
+                const program = rule.replacement.replace(/\n/g, " ");
+                const output = interpreter.interpret(line, program);
+                console.log({
+                    program: program,
+                    input: line,
+                    output: output,
+                });
+                return output;
+                // return rule.replacement.replace("{{line}}", line);
+            }
+        }));
+    }
+
+    var results = []
+    for (var rule of rules) {
+        const searchResult = index.search(rule.pattern);
+
+        if (searchResult.length == 0) {
+            continue;
+        }
+
+        const firstResult = searchResult[0].matchData.metadata;
+        if (searchResult.length > 0) {
+            for (var entry of Object.entries(firstResult)) {
+                results.push({
+                    processor: rule.processor,
+                    ranges: entry[1].content.position
+                });
+            }
+        }
+    }
+
+
+    var highlightedHTML = processHTMLDocument(documents[0].content, results);
+
+    document.body.innerHTML = highlightedHTML.html;
+    highlightedHTML.initializeNavigation();
+}
+
+loadAndExecuteRules();

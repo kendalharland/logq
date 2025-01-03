@@ -1,18 +1,27 @@
 {
-  "name": "Hello Extensions",
-  "description": "Base Level Extension",
+  "name": "logq",
+  "description": "https://github.com/kendalharland/logq",
   "version": "1.0",
   "manifest_version": 3,
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }, 
+  "permissions": [ "storage" ],
   "content_scripts": [
     {
       "matches": [
-        "https://github.com/thebrowsercompany/*/commit/*/checks/*/logs",
-        "https://*.blob.core.windows.net/actions-results/*/workflow-job-run-*/logs/job/job-logs.txt*"
+        "https://*.blob.core.windows.net/actions-results/*"
       ],
+      "css": [ "style.css" ],
       "js": [
         "lunr.js",
-        "index.js"
+        "index.js",
+        "options.js"
       ]
     }
-  ]
+  ],
+  "options_page": "options.html"
 }

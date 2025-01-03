@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Logq Options</title>
+    <style>
+        body {
+            padding: 20px;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        .rule-container {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+        .code-editor {
+            width: 100%;
+            height: 150px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        .error {
+            color: red;
+            display: none;
+            margin-top: 5px;
+        }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Log Viewer Rules</h1>
+    <div id="rulesContainer"></div>
+    <button id="addRule">Add New Rule</button>
+    <button id="saveRules">Save All Rules</button>
+    <div id="saveStatus"></div>
+
+    <template id="ruleTemplate">
+        <div class="rule-container">
+            <div>
+                <label>Pattern to fuzzy match:</label>
+                <input type="text" class="pattern-input" />
+            </div>
+            <div>
+                <label>Program to transform matched lines:</label>
+                <textarea class="code-editor">{{line}}</textarea>
+                <div class="error"></div>
+            </div>
+            <button class="remove-rule">Remove Rule</button>
+        </div>
+    </template>
+
+    <script src="options.js"></script>
+</body>
+</html>

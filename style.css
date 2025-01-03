@@ -1,0 +1,55 @@
+html {
+    background: black;
+    color: white;
+}
+
+.highlighted-line {
+    display: inline-block;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    /* line-height: 1.4; */
+    scroll-margin-top: 20px;
+}
+
+.highlighted-line.current {
+    background-color: #000000;
+    color:#fffefe;
+}
+
+.highlighted-fail {
+    display: block;
+    background-color: #f10e30;
+    color: #fffefe;
+    padding: 0;
+    margin: 0;
+}
+
+.highlighted-error {
+    display: block;
+    background-color: #5d0ef1;
+    color: #fefeff;
+}
+
+.highlighted-hint {
+    display: block;
+    background-color: #0ed6f1;
+    color: #000000;
+}
+
+.test-link {
+    display: block;
+    font-size: 0.9em;
+    margin-top: 2px;
+    padding: 4px;
+    color: #000000;
+    text-decoration: none;
+}
+
+.test-link:hover {
+    text-decoration: underline;
+}
+
+#transformed-log-output {
+    position: relative;
+}
