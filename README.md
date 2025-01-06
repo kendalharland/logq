@@ -34,7 +34,7 @@ language similar to that used by tools like `yq` and `jq`.
 
 ## Log Processing Pipeline
 
-The pipline allows you to transform log lines using a syntax like: `{{_}} | command1() | command2() | ...`
+The pipeline allows you to transform log lines using a syntax like: `{{_}} | command1() | command2() | ...`
 
 The initial `{{_}}` represents the input log line. This can be used anywhere in the pipeline to refer to the
 original input line. `{{}}` represents the input to the current pipeline stage (output of previous stage). 
