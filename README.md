@@ -24,7 +24,7 @@ After a small delay, it will do the following:
 The extensions options page is accessed differently based on which browser you are using:
 
 - **Chrome**: To open the options page, click the extension and select 'Options'.
-- **Arc**: To open the options page, open the command bar and type "logq"
+- **Arc**: To open the options page, open the command bar and type "logq", then click the extension and select 'Options'.
 
 ## Operation
 
