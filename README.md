@@ -94,16 +94,7 @@ Provides default value for empty/null/undefined inputs.
 
 # Design Notes
 
-## 1. Fuzzy searching algorithms
+## 1. Fuzzy searching algorithms & libraries to try
 
-There are a lot of options to choose from:
-
-### lunr.js
-
-Very fast and simple to use but has limited pattern matching functionality.
-No support for regex so users can't use things like match groups to transform
-output.
-
-### [fuse.js](https://www.fusejs.io/demo.html)
-
-TODO
+- [lunr.js](https://lunrjs.com/) (current) 
+- [fuse.js](https://www.fusejs.io/demo.html)
