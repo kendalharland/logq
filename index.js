@@ -186,9 +186,9 @@ class PipelineInterpreter {
         this.functions = {
             uppercase: (value) => value.toUpperCase(),
             match: (value, regex) => {
-                const match = value.match(regex);
-                console.log(`Match is ${match}`);
+                const match = regex.exec(value);
                 if (!match) return null;
+                console.log(`Match is ${match.length} for ${regex}`);
                 return match; // Return the full match array
             },
             fallback: (value, fallback_value) => {
@@ -243,7 +243,7 @@ class PipelineInterpreter {
         }
 
         // Handle function calls
-        const functionMatch = stage.match(/([a-zA-Z]+)\((.*)\)/);
+        const functionMatch = stage.match(/^([a-zA-Z]+)\((.*)\)/);
         if (functionMatch) {
             const [, fnName, argsStr] = functionMatch;
             const args = this._parseArgs(argsStr);
@@ -272,26 +272,36 @@ class PipelineInterpreter {
         for (let i = 0; i < argsStr.length; i++) {
             const char = argsStr[i];
 
+            if (inString) {
+                current += char;
+                if (char === '"' && argsStr[i - 1] !== '\\') {
+                    inString = false;
+                    args.push(current.trim())
+                    current = '';
+                }
+                continue;
+            } else if (char === '"') {
+                inString = true;
+                continue
+            }
+
+
             if (char === '/' && argsStr[i + 1] !== ' ') {
+                console.log(argsStr);
                 // Handle regex literals
                 let j = i + 1;
                 while (j < argsStr.length && argsStr[j] !== '/' || argsStr[j - 1] === '\\') j++;
-                args.push(new RegExp(argsStr.slice(i + 1, j), "ig"));
+                args.push(new RegExp(argsStr.slice(i + 1, j), "g"));
                 i = j;
                 continue;
             }
 
-            if (char === '"' && argsStr[i - 1] !== '\\') inString = !inString;
-            if (!inString) {
-                if (char === '(') depth++;
-                if (char === ')') depth--;
-            }
 
-            if (char === ',' && depth === 0 && !inString) {
+            if (char === '(') depth++;
+            if (char === ')') depth--;
+            if (char === ',' && depth === 0) {
                 args.push(current.trim());
                 current = '';
-            } else {
-                current += char;
             }
         }
 
